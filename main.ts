@@ -102,7 +102,13 @@ function restartIfEnded(): void {
 }
 
 canvas.addEventListener("pointerdown", restartIfEnded);
-window.addEventListener("keydown", restartIfEnded);
+// Only a fresh key press restarts. A movement key still held at the moment of
+// death keeps firing auto-repeat keydown events every few tens of ms, which
+// would restart the game before the player ever saw the win or lose screen.
+window.addEventListener("keydown", (event) => {
+  if (event.repeat) return;
+  restartIfEnded();
+});
 restartButton.addEventListener("click", restartIfEnded);
 
 // Decorative background stars: generated once at load, not per frame or from
