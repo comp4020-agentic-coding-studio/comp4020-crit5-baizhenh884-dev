@@ -15,7 +15,7 @@ const noInput: InputState = { pointerX: null, keyDirection: 0 };
 describe("falling object vs player", () => {
   it("decrements player HP by exactly OBJECT_DAMAGE and removes the object on overlap", () => {
     const state = createInitialState();
-    state.fallingObjects = [{ ...state.airplane }];
+    state.fallingObjects = [{ ...state.airplane, vx: 0, vy: 0 }];
 
     update(state, 0, noInput);
 
@@ -25,7 +25,7 @@ describe("falling object vs player", () => {
 
   it("cannot damage the player again once removed, even across further frames", () => {
     const state = createInitialState();
-    state.fallingObjects = [{ ...state.airplane }];
+    state.fallingObjects = [{ ...state.airplane, vx: 0, vy: 0 }];
 
     update(state, 0, noInput); // consumes the object on the first hit
     const hpAfterFirstHit = state.playerHp;
@@ -39,14 +39,14 @@ describe("falling object vs player", () => {
   it("stays active above 0 HP, and transitions to lost exactly at 0 HP", () => {
     const survivesHit = createInitialState();
     survivesHit.playerHp = 2;
-    survivesHit.fallingObjects = [{ ...survivesHit.airplane }];
+    survivesHit.fallingObjects = [{ ...survivesHit.airplane, vx: 0, vy: 0 }];
     update(survivesHit, 0, noInput);
     expect(survivesHit.playerHp).toBe(1);
     expect(survivesHit.phase).toBe("active");
 
     const dies = createInitialState();
     dies.playerHp = OBJECT_DAMAGE;
-    dies.fallingObjects = [{ ...dies.airplane }];
+    dies.fallingObjects = [{ ...dies.airplane, vx: 0, vy: 0 }];
     update(dies, 0, noInput);
     expect(dies.playerHp).toBe(0);
     expect(dies.phase).toBe("lost");
@@ -55,7 +55,7 @@ describe("falling object vs player", () => {
   it("never drops player HP below 0, even with multiple simultaneous hits", () => {
     const state = createInitialState();
     state.playerHp = OBJECT_DAMAGE;
-    state.fallingObjects = [{ ...state.airplane }, { ...state.airplane }];
+    state.fallingObjects = [{ ...state.airplane, vx: 0, vy: 0 }, { ...state.airplane, vx: 0, vy: 0 }];
 
     update(state, 0, noInput);
 
