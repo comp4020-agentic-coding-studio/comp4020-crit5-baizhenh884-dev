@@ -1,5 +1,5 @@
 // Pure game logic: no DOM/canvas dependency, so it's unit-testable directly
-// (see spec/game.test.ts, added in stage 3). main.ts owns rendering and input.
+// (see spec/game.test.ts). main.ts owns rendering and input.
 
 export interface Rect {
   x: number;
@@ -20,6 +20,9 @@ export interface GameState {
   monster: Monster;
   bullets: Rect[];
   fireTimerMs: number;
+  fallingObjects: Rect[];
+  spawnTimerMs: number;
+  playerHp: number;
 }
 
 export interface InputState {
@@ -52,6 +55,15 @@ export const BULLET_SPEED = 400; // px/s
 export const BULLET_FIRE_INTERVAL_MS = 350;
 export const BULLET_DAMAGE = 1;
 
+const OBJECT_WIDTH = 24;
+const OBJECT_HEIGHT = 24;
+
+export const PLAYER_MAX_HP = 10;
+export const OBJECT_DAMAGE = 1;
+export const OBJECT_FALL_SPEED = 100; // px/s — forgiving, and never ramps up
+export const OBJECT_SPAWN_INTERVAL_MS = 1500;
+export const MAX_CONCURRENT_OBJECTS = 2;
+
 export function createInitialState(): GameState {
   return {
     phase: "active",
@@ -70,6 +82,20 @@ export function createInitialState(): GameState {
     },
     bullets: [],
     fireTimerMs: 0,
+    // One object already en route at a forgiving fall speed, passing near the
+    // airplane's own default (centered) x — so the very first thing a player
+    // sees is "something falls toward roughly where I am," with several
+    // seconds to notice and react, not an unavoidable first hit.
+    fallingObjects: [
+      {
+        x: CANVAS_WIDTH / 2 - OBJECT_WIDTH / 2,
+        y: MONSTER_Y + MONSTER_HEIGHT,
+        w: OBJECT_WIDTH,
+        h: OBJECT_HEIGHT,
+      },
+    ],
+    spawnTimerMs: 0,
+    playerHp: PLAYER_MAX_HP,
   };
 }
 
@@ -114,8 +140,34 @@ function fireBullets(state: GameState, dt: number): void {
   }
 }
 
-// Advances bullets, resolves bullet↔monster collisions, and transitions to
-// "won" at 0 monster HP. Bullets that hit nothing simply fly off the top.
+// Spawns a new falling object once the interval elapses, up to the
+// concurrent cap. While at the cap, the timer is clamped rather than left to
+// accumulate, so freeing up a slot later can't trigger a burst of spawns —
+// the forgiving, non-ramping spawn rate holds regardless of recent history.
+function spawnFallingObjects(state: GameState, dt: number): void {
+  if (state.fallingObjects.length >= MAX_CONCURRENT_OBJECTS) {
+    state.spawnTimerMs = Math.min(state.spawnTimerMs, OBJECT_SPAWN_INTERVAL_MS);
+    return;
+  }
+
+  state.spawnTimerMs += dt * 1000;
+
+  if (state.spawnTimerMs >= OBJECT_SPAWN_INTERVAL_MS) {
+    state.spawnTimerMs -= OBJECT_SPAWN_INTERVAL_MS;
+    state.fallingObjects.push({
+      x: clampToCanvas(Math.random() * CANVAS_WIDTH, OBJECT_WIDTH),
+      y: state.monster.y + state.monster.h,
+      w: OBJECT_WIDTH,
+      h: OBJECT_HEIGHT,
+    });
+  }
+}
+
+// Advances bullets, resolving bullet↔falling-object and bullet↔monster
+// collisions, and transitions to "won" at 0 monster HP. A bullet that
+// destroys a falling object deals no monster damage — objects and the
+// monster's HP are unrelated per the locked design. Bullets that hit nothing
+// simply fly off the top.
 function updateBullets(state: GameState, dt: number): void {
   const surviving: Rect[] = [];
 
@@ -124,16 +176,50 @@ function updateBullets(state: GameState, dt: number): void {
 
     if (bullet.y + bullet.h < 0) continue; // off the top, gone
 
-    if (state.phase === "active" && aabbOverlap(bullet, state.monster)) {
-      state.monster.hp = Math.max(0, state.monster.hp - BULLET_DAMAGE);
-      if (state.monster.hp === 0) state.phase = "won";
-      continue; // bullet consumed on hit
+    if (state.phase === "active") {
+      const hitObjectIndex = state.fallingObjects.findIndex((object) =>
+        aabbOverlap(bullet, object),
+      );
+      if (hitObjectIndex !== -1) {
+        state.fallingObjects.splice(hitObjectIndex, 1);
+        continue; // bullet and object both consumed, no monster HP change
+      }
+
+      if (aabbOverlap(bullet, state.monster)) {
+        state.monster.hp = Math.max(0, state.monster.hp - BULLET_DAMAGE);
+        if (state.monster.hp === 0) state.phase = "won";
+        continue; // bullet consumed on hit
+      }
     }
 
     surviving.push(bullet);
   }
 
   state.bullets = surviving;
+}
+
+// Advances falling objects, resolves object↔player collisions, and
+// transitions to "lost" at 0 player HP. An object that passes the player
+// without hitting them simply falls off the bottom, gone. A single overlap
+// removes the object immediately, so it can never damage the player twice.
+function updateFallingObjects(state: GameState, dt: number): void {
+  const surviving: Rect[] = [];
+
+  for (const object of state.fallingObjects) {
+    object.y += OBJECT_FALL_SPEED * dt;
+
+    if (object.y > CANVAS_HEIGHT) continue; // off the bottom, gone
+
+    if (state.phase === "active" && aabbOverlap(object, state.airplane)) {
+      state.playerHp = Math.max(0, state.playerHp - OBJECT_DAMAGE);
+      if (state.playerHp === 0) state.phase = "lost";
+      continue; // object consumed on hit
+    }
+
+    surviving.push(object);
+  }
+
+  state.fallingObjects = surviving;
 }
 
 // Advances the airplane's x by one frame's worth of input. Pointer input is
@@ -145,5 +231,7 @@ export function update(state: GameState, dt: number, input: InputState): void {
 
   moveAirplane(state, dt, input);
   fireBullets(state, dt);
+  spawnFallingObjects(state, dt);
   updateBullets(state, dt);
+  updateFallingObjects(state, dt);
 }

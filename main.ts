@@ -2,6 +2,7 @@ import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
   MONSTER_MAX_HP,
+  PLAYER_MAX_HP,
   createInitialState,
   update,
   type InputState,
@@ -91,6 +92,11 @@ function render(): void {
   ctx.fillStyle = "#e05a5a";
   ctx.fillRect(barX, barY, barWidth * (monster.hp / MONSTER_MAX_HP), 5);
 
+  ctx.fillStyle = "#f0973f";
+  for (const object of state.fallingObjects) {
+    ctx.fillRect(object.x, object.y, object.w, object.h);
+  }
+
   ctx.fillStyle = "#f5f57a";
   for (const bullet of state.bullets) {
     ctx.fillRect(bullet.x, bullet.y, bullet.w, bullet.h);
@@ -99,11 +105,26 @@ function render(): void {
   ctx.fillStyle = "#3ff08a";
   ctx.fillRect(state.airplane.x, state.airplane.y, state.airplane.w, state.airplane.h);
 
+  const playerBarWidth = 100;
+  const playerBarX = 10;
+  const playerBarY = CANVAS_HEIGHT - 16;
+  ctx.fillStyle = "#2a2a3a";
+  ctx.fillRect(playerBarX, playerBarY, playerBarWidth, 5);
+  ctx.fillStyle = "#3ff08a";
+  ctx.fillRect(playerBarX, playerBarY, playerBarWidth * (state.playerHp / PLAYER_MAX_HP), 5);
+
   if (state.phase === "won") {
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 32px system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("YOU WIN", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  }
+
+  if (state.phase === "lost") {
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 32px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("GAME OVER", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
   }
 
   restartButton.hidden = state.phase === "active";
