@@ -1,7 +1,17 @@
-import { CANVAS_HEIGHT, CANVAS_WIDTH, createInitialState, update, type InputState } from "./game.ts";
+import {
+  CANVAS_HEIGHT,
+  CANVAS_WIDTH,
+  MONSTER_MAX_HP,
+  createInitialState,
+  update,
+  type InputState,
+} from "./game.ts";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#game");
 if (!canvas) throw new Error("missing #game canvas");
+
+const restartButton = document.querySelector<HTMLButtonElement>("#restart");
+if (!restartButton) throw new Error("missing #restart button");
 
 canvas.width = CANVAS_WIDTH;
 canvas.height = CANVAS_HEIGHT;
@@ -52,17 +62,51 @@ window.addEventListener("keyup", (event) => {
   recomputeKeyDirection();
 });
 
+function restartIfEnded(): void {
+  if (state.phase !== "active") {
+    state = createInitialState();
+  }
+}
+
+canvas.addEventListener("pointerdown", restartIfEnded);
+window.addEventListener("keydown", restartIfEnded);
+restartButton.addEventListener("click", restartIfEnded);
+
 function render(): void {
   if (!ctx) return;
+  if (!restartButton) return;
 
   ctx.fillStyle = "#0b1020";
   ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
+  const monster = state.monster;
   ctx.fillStyle = "#7a3ff0";
-  ctx.fillRect(state.monster.x, state.monster.y, state.monster.w, state.monster.h);
+  ctx.fillRect(monster.x, monster.y, monster.w, monster.h);
+
+  const barWidth = monster.w;
+  const barX = monster.x;
+  const barY = monster.y - 10;
+  ctx.fillStyle = "#2a2a3a";
+  ctx.fillRect(barX, barY, barWidth, 5);
+  ctx.fillStyle = "#e05a5a";
+  ctx.fillRect(barX, barY, barWidth * (monster.hp / MONSTER_MAX_HP), 5);
+
+  ctx.fillStyle = "#f5f57a";
+  for (const bullet of state.bullets) {
+    ctx.fillRect(bullet.x, bullet.y, bullet.w, bullet.h);
+  }
 
   ctx.fillStyle = "#3ff08a";
   ctx.fillRect(state.airplane.x, state.airplane.y, state.airplane.w, state.airplane.h);
+
+  if (state.phase === "won") {
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 32px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("YOU WIN", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  }
+
+  restartButton.hidden = state.phase === "active";
 }
 
 let lastTime: number | null = null;
