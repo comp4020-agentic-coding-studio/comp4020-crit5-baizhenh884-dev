@@ -24,13 +24,12 @@ const ctx = canvas.getContext("2d");
 if (!ctx) throw new Error("2d context unavailable");
 
 // Game logic and all drawing work in a fixed CANVAS_WIDTH x CANVAS_HEIGHT
-// coordinate space. CSS decides how big the element is actually displayed,
-// which is now much larger than that on desktop, so the backing store is
-// matched to the displayed size (times device pixel ratio) and the context is
-// scaled by the same factor. Everything downstream still draws in game
-// coordinates, so gameplay positions, hitboxes and the pointer mapping in the
-// pointermove handler (which divides by CANVAS_WIDTH, not canvas.width) are
-// all unaffected — only render sharpness changes.
+// coordinate space. CSS decides how big the element is actually displayed, so
+// the backing store is matched to the displayed size (times device pixel
+// ratio) and the context is scaled by the same factor. Everything downstream
+// still draws in game coordinates, so gameplay positions, hitboxes and the
+// pointer mapping in the pointermove handler (which divides by CANVAS_WIDTH,
+// not canvas.width) are all unaffected — only render sharpness changes.
 let backingScale = 0;
 
 function syncBackingStore(): void {
@@ -111,14 +110,107 @@ window.addEventListener("keydown", (event) => {
 });
 restartButton.addEventListener("click", restartIfEnded);
 
-// Decorative background stars: generated once at load, not per frame or from
-// gameplay state — purely cosmetic, has no effect on collisions or timing.
-const STARS = Array.from({ length: 50 }, () => ({
-  x: Math.random() * CANVAS_WIDTH,
-  y: Math.random() * CANVAS_HEIGHT,
-  r: Math.random() * 1.2 + 0.3,
-  a: Math.random() * 0.6 + 0.2,
-}));
+// ---------------------------------------------------------------------------
+// Presentation state. None of this is read by game.ts — it exists only so the
+// HUD can animate and hits can flash. It is derived by watching the HP values
+// change between frames, so no gameplay state was added to carry it.
+// ---------------------------------------------------------------------------
+
+let monsterHpShown = MONSTER_MAX_HP;
+let playerHpShown = PLAYER_MAX_HP;
+let prevMonsterHp = MONSTER_MAX_HP;
+let prevPlayerHp = PLAYER_MAX_HP;
+let monsterFlash = 0;
+let playerFlash = 0;
+
+function updatePresentation(dt: number): void {
+  if (state.monster.hp < prevMonsterHp) monsterFlash = 1;
+  if (state.playerHp < prevPlayerHp) playerFlash = 1;
+  prevMonsterHp = state.monster.hp;
+  prevPlayerHp = state.playerHp;
+
+  monsterFlash = Math.max(0, monsterFlash - dt * 6);
+  playerFlash = Math.max(0, playerFlash - dt * 2.2);
+
+  // Health bars chase the real value so a hit reads as a visible drain.
+  const k = Math.min(1, dt * 9);
+  monsterHpShown += (state.monster.hp - monsterHpShown) * k;
+  playerHpShown += (state.playerHp - playerHpShown) * k;
+}
+
+// ---------------------------------------------------------------------------
+// Static background. Stars and gradients are built once at load, never per
+// frame and never from gameplay state.
+// ---------------------------------------------------------------------------
+
+function makeStars(count: number, minR: number, maxR: number, alpha: number) {
+  return Array.from({ length: count }, () => ({
+    x: Math.random() * CANVAS_WIDTH,
+    y: Math.random() * CANVAS_HEIGHT,
+    r: minR + Math.random() * (maxR - minR),
+    a: alpha * (0.55 + Math.random() * 0.45),
+  }));
+}
+
+const STARS = [
+  ...makeStars(90, 0.3, 0.85, 0.3),
+  ...makeStars(40, 0.8, 1.4, 0.5),
+  ...makeStars(14, 1.4, 2.2, 0.8),
+];
+
+const SKY = ctx.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
+SKY.addColorStop(0, "#0a0f26");
+SKY.addColorStop(0.55, "#0b1020");
+SKY.addColorStop(1, "#141a33");
+
+const NEBULA_A = ctx.createRadialGradient(230, 180, 20, 230, 180, 380);
+NEBULA_A.addColorStop(0, "rgba(96, 62, 190, 0.20)");
+NEBULA_A.addColorStop(1, "rgba(96, 62, 190, 0)");
+
+const NEBULA_B = ctx.createRadialGradient(760, 470, 20, 760, 470, 420);
+NEBULA_B.addColorStop(0, "rgba(28, 120, 150, 0.16)");
+NEBULA_B.addColorStop(1, "rgba(28, 120, 150, 0)");
+
+// A distant planet, mostly off-field in the bottom-right corner.
+const PLANET = { x: 1015, y: 820, r: 300 };
+const PLANET_FILL = ctx.createRadialGradient(
+  PLANET.x - PLANET.r * 0.55,
+  PLANET.y - PLANET.r * 0.55,
+  PLANET.r * 0.1,
+  PLANET.x,
+  PLANET.y,
+  PLANET.r,
+);
+PLANET_FILL.addColorStop(0, "#1d2b52");
+PLANET_FILL.addColorStop(0.6, "#131c38");
+PLANET_FILL.addColorStop(1, "#0a0e1f");
+
+const VIGNETTE = ctx.createRadialGradient(
+  CANVAS_WIDTH / 2,
+  CANVAS_HEIGHT / 2,
+  CANVAS_HEIGHT * 0.32,
+  CANVAS_WIDTH / 2,
+  CANVAS_HEIGHT / 2,
+  CANVAS_WIDTH * 0.72,
+);
+VIGNETTE.addColorStop(0, "rgba(0, 0, 0, 0)");
+VIGNETTE.addColorStop(1, "rgba(0, 0, 0, 0.45)");
+
+// ---------------------------------------------------------------------------
+// Drawing helpers
+// ---------------------------------------------------------------------------
+
+// How much larger than its collision box each entity is *drawn*. These are
+// presentation only — game.ts never sees them, and every collision still uses
+// the unscaled rects. Each is centred on its box, so the overhang is shared
+// evenly on both sides rather than shifting the artwork off the hitbox.
+const AIRPLANE_ART_SCALE = 1.18;
+const MONSTER_ART_SCALE = 1.12;
+const BULLET_ART_SCALE = 1.5;
+
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v));
+}
 
 function drawRoundedRectPath(
   context: CanvasRenderingContext2D,
@@ -139,99 +231,229 @@ function drawRoundedRectPath(
 }
 
 function drawBackground(context: CanvasRenderingContext2D): void {
-  const gradient = context.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
-  gradient.addColorStop(0, "#0b1020");
-  gradient.addColorStop(1, "#161b33");
-  context.fillStyle = gradient;
+  context.fillStyle = SKY;
   context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
+  context.fillStyle = NEBULA_A;
+  context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  context.fillStyle = NEBULA_B;
+  context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+  context.fillStyle = "#ffffff";
   for (const star of STARS) {
     context.globalAlpha = star.a;
-    context.fillStyle = "#ffffff";
     context.beginPath();
     context.arc(star.x, star.y, star.r, 0, Math.PI * 2);
     context.fill();
   }
   context.globalAlpha = 1;
+
+  context.fillStyle = PLANET_FILL;
+  context.beginPath();
+  context.arc(PLANET.x, PLANET.y, PLANET.r, 0, Math.PI * 2);
+  context.fill();
+  context.strokeStyle = "rgba(150, 185, 255, 0.16)";
+  context.lineWidth = 1.5;
+  context.beginPath();
+  context.arc(PLANET.x, PLANET.y, PLANET.r, Math.PI * 0.85, Math.PI * 1.62);
+  context.stroke();
+
+  context.fillStyle = VIGNETTE;
+  context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 }
 
-function drawHpBar(
+// Arcade corner brackets, so the field reads as a bounded cabinet screen.
+function drawFieldFrame(context: CanvasRenderingContext2D): void {
+  const inset = 9;
+  const len = 30;
+  context.strokeStyle = "rgba(130, 175, 255, 0.3)";
+  context.lineWidth = 2;
+  context.lineCap = "butt";
+  const corners: [number, number, number, number][] = [
+    [inset, inset, 1, 1],
+    [CANVAS_WIDTH - inset, inset, -1, 1],
+    [inset, CANVAS_HEIGHT - inset, 1, -1],
+    [CANVAS_WIDTH - inset, CANVAS_HEIGHT - inset, -1, -1],
+  ];
+  for (const [x, y, sx, sy] of corners) {
+    context.beginPath();
+    context.moveTo(x + sx * len, y);
+    context.lineTo(x, y);
+    context.lineTo(x, y + sy * len);
+    context.stroke();
+  }
+}
+
+// A framed meter with a pale "ghost" that lags behind the real value, so a
+// hit reads as a visible drain rather than an instant jump.
+function drawMeter(
   context: CanvasRenderingContext2D,
   x: number,
   y: number,
   w: number,
   h: number,
   ratio: number,
-  fillColor: string,
+  ghostRatio: number,
+  from: string,
+  to: string,
+  ghost: string,
+  frame: string,
+  segments: number,
 ): void {
-  drawRoundedRectPath(context, x, y, w, h, h / 2);
-  context.fillStyle = "#20233a";
+  drawRoundedRectPath(context, x - 3, y - 3, w + 6, h + 6, 5);
+  context.fillStyle = "rgba(6, 10, 22, 0.8)";
+  context.fill();
+  context.strokeStyle = frame;
+  context.lineWidth = 1.5;
+  context.stroke();
+
+  drawRoundedRectPath(context, x, y, w, h, 3);
+  context.fillStyle = "#141026";
   context.fill();
 
-  const clamped = Math.max(0, Math.min(1, ratio));
-  if (clamped > 0) {
-    drawRoundedRectPath(context, x, y, w * clamped, h, h / 2);
-    context.fillStyle = fillColor;
-    context.fill();
+  context.save();
+  drawRoundedRectPath(context, x, y, w, h, 3);
+  context.clip();
+
+  const g = clamp01(ghostRatio);
+  if (g > 0) {
+    context.fillStyle = ghost;
+    context.fillRect(x, y, w * g, h);
   }
 
-  context.strokeStyle = "rgba(255, 255, 255, 0.25)";
-  context.lineWidth = 1;
-  drawRoundedRectPath(context, x, y, w, h, h / 2);
+  const r = clamp01(ratio);
+  if (r > 0) {
+    const fill = context.createLinearGradient(x, y, x, y + h);
+    fill.addColorStop(0, from);
+    fill.addColorStop(1, to);
+    context.fillStyle = fill;
+    context.fillRect(x, y, w * r, h);
+  }
+
+  context.fillStyle = "rgba(0, 0, 0, 0.4)";
+  for (let i = 1; i < segments; i++) {
+    context.fillRect(x + (w * i) / segments - 1, y, 2, h);
+  }
+  context.restore();
+}
+
+function drawBossBar(context: CanvasRenderingContext2D, monster: Monster): void {
+  const w = 460;
+  const h = 16;
+  const x = (CANVAS_WIDTH - w) / 2;
+  const y = 22;
+  drawMeter(
+    context,
+    x,
+    y,
+    w,
+    h,
+    monster.hp / MONSTER_MAX_HP,
+    monsterHpShown / MONSTER_MAX_HP,
+    "#ff8f63",
+    "#c8163a",
+    "rgba(255, 170, 170, 0.35)",
+    "rgba(255, 96, 120, 0.5)",
+    10,
+  );
+}
+
+// Player health as a small HUD panel: an airplane glyph plus one pip per HP.
+function drawPlayerHud(context: CanvasRenderingContext2D): void {
+  const panelW = 226;
+  const panelH = 38;
+  const x = 20;
+  const y = CANVAS_HEIGHT - panelH - 20;
+
+  drawRoundedRectPath(context, x, y, panelW, panelH, 8);
+  context.fillStyle = "rgba(7, 12, 24, 0.74)";
+  context.fill();
+  context.strokeStyle =
+    playerFlash > 0
+      ? `rgba(255, 90, 90, ${(0.3 + 0.6 * playerFlash).toFixed(3)})`
+      : "rgba(120, 210, 165, 0.3)";
+  context.lineWidth = 1.5;
   context.stroke();
+
+  context.fillStyle = "#54ff9d";
+  airplanePath(context, x + 22, y + 9, 22, 21);
+  context.fill();
+
+  const pipW = 14;
+  const pipH = 9;
+  const gap = 3;
+  const startX = x + 44;
+  const pipY = y + (panelH - pipH) / 2;
+  for (let i = 0; i < PLAYER_MAX_HP; i++) {
+    const px = startX + i * (pipW + gap);
+    drawRoundedRectPath(context, px, pipY, pipW, pipH, 2);
+    if (i < state.playerHp) {
+      const g = context.createLinearGradient(px, pipY, px, pipY + pipH);
+      g.addColorStop(0, "#7dffbe");
+      g.addColorStop(1, "#23c471");
+      context.fillStyle = g;
+    } else {
+      context.fillStyle = "rgba(255, 255, 255, 0.08)";
+    }
+    context.fill();
+  }
 }
 
 // Draws the monster as a hostile angular boss: a jagged armoured carapace,
 // bone horns and crest spikes, slanted glowing eyes, a fanged maw, and an arm
 // ending in a clawed fist on each side.
 //
-// The two fists are pinned to the collision box's left and right edges, which
-// are exactly the x-coordinates the alternating throw launches from (the box
-// half-width equals OBJECT_SPAWN_SIDE_OFFSET in game.ts), so each projectile
-// leaves the hand that actually threw it — no change to the throw logic.
+// The whole creature is drawn at MONSTER_ART_SCALE around the centre of its
+// collision box, so it reads as the boss without game.ts knowing. Each fist
+// sits at the scaled half-width, a few px outside the box edge the matching
+// throw launches from — well inside the fireball's own radius, so the ball
+// still appears to leave the hand that threw it.
 //
-// Horns, crest spikes and claws deliberately overhang the box vertically to
-// make the silhouette larger and more menacing, but the carapace — the part
-// that reads as the monster's body — fills monster.x/y/w/h, and nothing
-// overhangs it horizontally. That rect is still the only thing game.ts
-// collides against, and horizontal alignment is what decides whether a
+// Horns, crest spikes and claws overhang the box the most; the carapace stays
+// close to it. monster.x/y/w/h is still the only rect anything collides
+// against, and horizontal alignment is what decides whether a
 // vertically-travelling bullet that looks like a hit registers as one.
 function drawMonster(context: CanvasRenderingContext2D, monster: Monster): void {
-  const { x, y, w, h } = monster;
-  const cx = x + w / 2;
-  const cy = y + h / 2;
+  const cx = monster.x + monster.w / 2;
+  const cy = monster.y + monster.h / 2;
+  const w = monster.w * MONSTER_ART_SCALE;
+  const h = monster.h * MONSTER_ART_SCALE;
+  const top = cy - h / 2;
 
   context.lineJoin = "miter";
   context.lineCap = "butt";
 
   // --- Arms and clawed fists, behind the carapace ---
-  const handY = y + h * 0.86;
+  const handY = top + h * 0.86;
+  const armWidth = Math.max(5, w * 0.055);
   for (const side of [-1, 1] as const) {
     const handX = cx + (side * w) / 2; // the box edge = this side's throw origin
 
     context.strokeStyle = "#43108a";
-    context.lineWidth = 5;
+    context.lineWidth = armWidth;
     context.beginPath();
     context.moveTo(cx + side * w * 0.2, cy - h * 0.05);
     context.lineTo(cx + side * w * 0.42, cy + h * 0.12);
     context.lineTo(handX, handY);
     context.stroke();
 
+    const fist = w * 0.065;
     context.fillStyle = "#6b28c9";
     context.beginPath();
-    context.moveTo(handX - 6, handY - 5);
-    context.lineTo(handX + 6, handY - 4);
-    context.lineTo(handX + 5, handY + 5);
-    context.lineTo(handX - 5, handY + 4);
+    context.moveTo(handX - fist, handY - fist * 0.85);
+    context.lineTo(handX + fist, handY - fist * 0.7);
+    context.lineTo(handX + fist * 0.85, handY + fist * 0.85);
+    context.lineTo(handX - fist * 0.85, handY + fist * 0.7);
     context.closePath();
     context.fill();
 
     context.fillStyle = "#efe6ff";
-    for (const offset of [-5, 0, 5]) {
+    for (const offset of [-1, 0, 1]) {
+      const ox = offset * w * 0.052;
       context.beginPath();
-      context.moveTo(handX + offset - 2.2, handY + 2);
-      context.lineTo(handX + offset + 2.2, handY + 2);
-      context.lineTo(handX + offset + side * 1.5, handY + 11);
+      context.moveTo(handX + ox - w * 0.023, handY + h * 0.04);
+      context.lineTo(handX + ox + w * 0.023, handY + h * 0.04);
+      context.lineTo(handX + ox + side * w * 0.016, handY + h * 0.23);
       context.closePath();
       context.fill();
     }
@@ -257,9 +479,9 @@ function drawMonster(context: CanvasRenderingContext2D, monster: Monster): void 
   }
 
   // --- Carapace: angular, fills the collision box ---
-  const shell = context.createLinearGradient(0, y, 0, y + h);
-  shell.addColorStop(0, "#7c3aed");
-  shell.addColorStop(1, "#3b0f70");
+  const shell = context.createLinearGradient(0, top, 0, top + h);
+  shell.addColorStop(0, "#8b46f5");
+  shell.addColorStop(1, "#360d66");
   context.fillStyle = shell;
   context.beginPath();
   context.moveTo(cx - w * 0.48, cy - h * 0.04);
@@ -330,82 +552,150 @@ function drawMonster(context: CanvasRenderingContext2D, monster: Monster): void 
     context.closePath();
     context.fill();
   }
+
+  if (monsterFlash > 0) {
+    const hit = context.createRadialGradient(cx, cy, 0, cx, cy, w * 0.72);
+    hit.addColorStop(0, `rgba(255, 255, 255, ${(0.5 * monsterFlash).toFixed(3)})`);
+    hit.addColorStop(1, "rgba(255, 255, 255, 0)");
+    context.fillStyle = hit;
+    context.beginPath();
+    context.arc(cx, cy, w * 0.72, 0, Math.PI * 2);
+    context.fill();
+  }
 }
 
-// Draws the airplane as a simple top-down aircraft (nose pointing up, toward
-// the monster and the direction it fires). Wingtips sit exactly at the
-// collision box's left/right edges, so the visible silhouette doesn't extend
-// past the hitbox used for collisions.
+// Right half of a top-down aircraft, as fractions of (width, height) measured
+// from the nose. Mirrored to build the full silhouette. Thick trapezoidal
+// wings and a separate tailplane are what make it read as an aircraft rather
+// than a star: the wings have real chord, and the tail is a second, smaller
+// horizontal surface.
+const AIRPLANE_PROFILE: [number, number][] = [
+  [0.09, 0.2],
+  [0.1, 0.4],
+  [0.5, 0.54],
+  [0.5, 0.645],
+  [0.13, 0.66],
+  [0.115, 0.85],
+  [0.29, 0.895],
+  [0.29, 0.965],
+  [0.085, 0.965],
+  [0.07, 1],
+];
+
+function airplanePath(
+  context: CanvasRenderingContext2D,
+  cx: number,
+  top: number,
+  w: number,
+  h: number,
+): void {
+  context.beginPath();
+  context.moveTo(cx, top);
+  for (const [dx, dy] of AIRPLANE_PROFILE) {
+    context.lineTo(cx + dx * w, top + dy * h);
+  }
+  for (let i = AIRPLANE_PROFILE.length - 1; i >= 0; i--) {
+    const [dx, dy] = AIRPLANE_PROFILE[i];
+    context.lineTo(cx - dx * w, top + dy * h);
+  }
+  context.closePath();
+}
+
+// Drawn at AIRPLANE_ART_SCALE around the centre of the collision box, so the
+// wingtips overhang slightly while the fuselage — the part that reads as the
+// aircraft's body — stays inside plane.x/y/w/h. A fireball clipping a wingtip
+// therefore still misses, which errs in the player's favour.
 function drawAirplane(context: CanvasRenderingContext2D, plane: Rect): void {
   const cx = plane.x + plane.w / 2;
-  const top = plane.y;
-  const bottom = plane.y + plane.h;
-  const w = plane.w;
-  const h = plane.h;
+  const w = plane.w * AIRPLANE_ART_SCALE;
+  const h = plane.h * AIRPLANE_ART_SCALE;
+  const top = plane.y + (plane.h - h) / 2;
 
-  // Soft glow so the plane stays legible against the darker background at the
-  // larger display size. Translucent and tight to the body — it reads as a
-  // glow, not as extra aircraft, and the hitbox is unchanged.
-  const glow = context.createRadialGradient(cx, top + h * 0.5, 1, cx, top + h * 0.5, w * 0.6);
-  glow.addColorStop(0, "rgba(63, 240, 138, 0.28)");
+  // Soft glow, translucent and tight to the body — reads as a glow, not as
+  // extra aircraft. The hitbox is unchanged.
+  const glow = context.createRadialGradient(cx, top + h * 0.5, 1, cx, top + h * 0.5, w * 0.62);
+  glow.addColorStop(0, "rgba(63, 240, 138, 0.3)");
   glow.addColorStop(1, "rgba(63, 240, 138, 0)");
   context.fillStyle = glow;
   context.beginPath();
-  context.arc(cx, top + h * 0.5, w * 0.6, 0, Math.PI * 2);
+  context.arc(cx, top + h * 0.5, w * 0.62, 0, Math.PI * 2);
   context.fill();
 
-  // Engine exhaust
-  context.fillStyle = "rgba(255, 168, 66, 0.85)";
-  context.beginPath();
-  context.moveTo(cx - w * 0.08, bottom - h * 0.05);
-  context.lineTo(cx + w * 0.08, bottom - h * 0.05);
-  context.lineTo(cx, bottom + h * 0.28);
-  context.closePath();
-  context.fill();
+  // Twin engine exhaust
+  context.fillStyle = "rgba(255, 168, 66, 0.9)";
+  for (const side of [-1, 1] as const) {
+    const ex = cx + side * w * 0.075;
+    context.beginPath();
+    context.moveTo(ex - w * 0.035, top + h * 0.97);
+    context.lineTo(ex + w * 0.035, top + h * 0.97);
+    context.lineTo(ex, top + h * 1.28);
+    context.closePath();
+    context.fill();
+  }
 
-  context.fillStyle = "#54ff9d";
-  context.strokeStyle = "#0f5f36";
+  context.lineJoin = "round";
+  airplanePath(context, cx, top, w, h);
+  const body = context.createLinearGradient(cx - w / 2, 0, cx + w / 2, 0);
+  body.addColorStop(0, "#2fd47f");
+  body.addColorStop(0.5, "#6dffb4");
+  body.addColorStop(1, "#2fd47f");
+  context.fillStyle = body;
+  context.fill();
+  context.strokeStyle = "#0d5a34";
   context.lineWidth = 1.5;
-
-  context.beginPath();
-  context.moveTo(cx, top);
-  context.lineTo(cx + w * 0.12, top + h * 0.35);
-  context.lineTo(cx + w * 0.5, top + h * 0.55);
-  context.lineTo(cx + w * 0.18, top + h * 0.62);
-  context.lineTo(cx + w * 0.22, bottom);
-  context.lineTo(cx, bottom - h * 0.12);
-  context.lineTo(cx - w * 0.22, bottom);
-  context.lineTo(cx - w * 0.18, top + h * 0.62);
-  context.lineTo(cx - w * 0.5, top + h * 0.55);
-  context.lineTo(cx - w * 0.12, top + h * 0.35);
-  context.closePath();
-  context.fill();
   context.stroke();
 
+  // Canopy
   context.fillStyle = "#0b3f24";
   context.beginPath();
-  context.ellipse(cx, top + h * 0.32, w * 0.075, h * 0.13, 0, 0, Math.PI * 2);
+  context.ellipse(cx, top + h * 0.29, w * 0.055, h * 0.14, 0, 0, Math.PI * 2);
   context.fill();
+
+  if (playerFlash > 0) {
+    airplanePath(context, cx, top, w, h);
+    context.fillStyle = `rgba(255, 70, 70, ${(0.6 * playerFlash).toFixed(3)})`;
+    context.fill();
+  }
 }
 
 function drawBullet(context: CanvasRenderingContext2D, bullet: Rect): void {
   const cx = bullet.x + bullet.w / 2;
   const cy = bullet.y + bullet.h / 2;
 
-  const halo = context.createRadialGradient(cx, cy, 0, cx, cy, bullet.w * 1.8);
-  halo.addColorStop(0, "rgba(255, 236, 150, 0.5)");
-  halo.addColorStop(1, "rgba(255, 236, 150, 0)");
+  // Core drawn a little larger than the collision box so the shot stays
+  // trackable against the starfield. BULLET_ART_SCALE is presentation only.
+  const rx = (bullet.w * BULLET_ART_SCALE) / 2;
+  const ry = (bullet.h * BULLET_ART_SCALE) / 2;
+
+  // Trail behind (below) the bullet, which always travels straight up.
+  const tail = cy + bullet.h * 3.2;
+  const trail = context.createLinearGradient(cx, cy, cx, tail);
+  trail.addColorStop(0, "rgba(255, 231, 138, 0.75)");
+  trail.addColorStop(1, "rgba(255, 231, 138, 0)");
+  context.strokeStyle = trail;
+  context.lineWidth = rx * 1.7;
+  context.lineCap = "round";
+  context.beginPath();
+  context.moveTo(cx, cy);
+  context.lineTo(cx, tail);
+  context.stroke();
+
+  const halo = context.createRadialGradient(cx, cy, 0, cx, cy, bullet.w * 2.8);
+  halo.addColorStop(0, "rgba(255, 246, 200, 0.85)");
+  halo.addColorStop(0.45, "rgba(255, 205, 90, 0.4)");
+  halo.addColorStop(1, "rgba(255, 205, 90, 0)");
   context.fillStyle = halo;
   context.beginPath();
-  context.arc(cx, cy, bullet.w * 1.8, 0, Math.PI * 2);
+  context.arc(cx, cy, bullet.w * 2.8, 0, Math.PI * 2);
   context.fill();
 
-  const core = context.createLinearGradient(bullet.x, bullet.y, bullet.x, bullet.y + bullet.h);
+  const core = context.createLinearGradient(cx, cy - ry, cx, cy + ry);
   core.addColorStop(0, "#ffffff");
-  core.addColorStop(1, "#f5c542");
+  core.addColorStop(0.55, "#fff2b0");
+  core.addColorStop(1, "#ffb020");
   context.fillStyle = core;
   context.beginPath();
-  context.ellipse(cx, cy, bullet.w / 2, bullet.h / 2, 0, 0, Math.PI * 2);
+  context.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
   context.fill();
 }
 
@@ -414,29 +704,28 @@ function drawProjectile(context: CanvasRenderingContext2D, object: FallingObject
   const cy = object.y + object.h / 2;
   const radius = object.w / 2;
 
-  // Short trail along the object's own fixed velocity, so the diagonal line it
-  // is actually travelling is easy to read at a glance. Read-only use of
-  // vx/vy — nothing here changes the trajectory.
+  // Trail along the object's own fixed velocity, so the diagonal line it is
+  // actually travelling is easy to read. Read-only use of vx/vy.
   const speed = Math.hypot(object.vx, object.vy) || 1;
-  const tailX = cx - (object.vx / speed) * radius * 2.8;
-  const tailY = cy - (object.vy / speed) * radius * 2.8;
+  const tailX = cx - (object.vx / speed) * radius * 3;
+  const tailY = cy - (object.vy / speed) * radius * 3;
   const trail = context.createLinearGradient(cx, cy, tailX, tailY);
-  trail.addColorStop(0, "rgba(247, 165, 65, 0.45)");
+  trail.addColorStop(0, "rgba(247, 165, 65, 0.5)");
   trail.addColorStop(1, "rgba(247, 165, 65, 0)");
   context.strokeStyle = trail;
-  context.lineWidth = object.w * 0.65;
+  context.lineWidth = object.w * 0.68;
   context.lineCap = "round";
   context.beginPath();
   context.moveTo(cx, cy);
   context.lineTo(tailX, tailY);
   context.stroke();
 
-  const halo = context.createRadialGradient(cx, cy, radius * 0.6, cx, cy, radius * 1.9);
-  halo.addColorStop(0, "rgba(247, 120, 40, 0.45)");
+  const halo = context.createRadialGradient(cx, cy, radius * 0.5, cx, cy, radius * 2.1);
+  halo.addColorStop(0, "rgba(247, 120, 40, 0.5)");
   halo.addColorStop(1, "rgba(247, 120, 40, 0)");
   context.fillStyle = halo;
   context.beginPath();
-  context.arc(cx, cy, radius * 1.9, 0, Math.PI * 2);
+  context.arc(cx, cy, radius * 2.1, 0, Math.PI * 2);
   context.fill();
 
   const core = context.createRadialGradient(
@@ -459,25 +748,58 @@ function drawProjectile(context: CanvasRenderingContext2D, object: FallingObject
   context.stroke();
 }
 
-function drawEndPanel(context: CanvasRenderingContext2D, text: string, accentColor: string): void {
-  context.fillStyle = "rgba(5, 8, 18, 0.6)";
+function drawHitVignette(context: CanvasRenderingContext2D): void {
+  if (playerFlash <= 0) return;
+  const g = context.createRadialGradient(
+    CANVAS_WIDTH / 2,
+    CANVAS_HEIGHT / 2,
+    CANVAS_HEIGHT * 0.3,
+    CANVAS_WIDTH / 2,
+    CANVAS_HEIGHT / 2,
+    CANVAS_WIDTH * 0.68,
+  );
+  g.addColorStop(0, "rgba(255, 40, 60, 0)");
+  g.addColorStop(1, `rgba(255, 40, 60, ${(0.5 * playerFlash).toFixed(3)})`);
+  context.fillStyle = g;
+  context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+}
+
+function drawEndPanel(context: CanvasRenderingContext2D, text: string, accent: string): void {
+  context.fillStyle = "rgba(5, 8, 18, 0.66)";
   context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-  const panelW = 260;
-  const panelH = 96;
+  const panelW = 380;
+  const panelH = 124;
   const x = CANVAS_WIDTH / 2 - panelW / 2;
   const y = CANVAS_HEIGHT / 2 - panelH / 2;
 
-  drawRoundedRectPath(context, x, y, panelW, panelH, 12);
-  context.fillStyle = "rgba(11, 16, 32, 0.85)";
+  drawRoundedRectPath(context, x, y, panelW, panelH, 14);
+  context.fillStyle = "rgba(9, 13, 28, 0.94)";
   context.fill();
-  context.strokeStyle = accentColor;
+  context.strokeStyle = accent;
   context.lineWidth = 2;
-  drawRoundedRectPath(context, x, y, panelW, panelH, 12);
   context.stroke();
 
+  // Corner brackets, matching the field frame.
+  context.lineWidth = 3;
+  const len = 26;
+  const pad = 10;
+  const corners: [number, number, number, number][] = [
+    [x + pad, y + pad, 1, 1],
+    [x + panelW - pad, y + pad, -1, 1],
+    [x + pad, y + panelH - pad, 1, -1],
+    [x + panelW - pad, y + panelH - pad, -1, -1],
+  ];
+  for (const [px, py, sx, sy] of corners) {
+    context.beginPath();
+    context.moveTo(px + sx * len, py);
+    context.lineTo(px, py);
+    context.lineTo(px, py + sy * len);
+    context.stroke();
+  }
+
   context.fillStyle = "#ffffff";
-  context.font = "bold 28px system-ui, sans-serif";
+  context.font = "bold 40px system-ui, sans-serif";
   context.textAlign = "center";
   context.textBaseline = "middle";
   context.fillText(text, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
@@ -489,10 +811,7 @@ function render(): void {
 
   drawBackground(ctx);
 
-  const monster = state.monster;
-  drawMonster(ctx, monster);
-  // Sits clear above the horns, which overhang the top of the collision box.
-  drawHpBar(ctx, monster.x, monster.y - 27, monster.w, 7, monster.hp / MONSTER_MAX_HP, "#e05a5a");
+  drawMonster(ctx, state.monster);
 
   for (const object of state.fallingObjects) {
     drawProjectile(ctx, object);
@@ -504,7 +823,10 @@ function render(): void {
 
   drawAirplane(ctx, state.airplane);
 
-  drawHpBar(ctx, 12, CANVAS_HEIGHT - 24, 130, 10, state.playerHp / PLAYER_MAX_HP, "#3ff08a");
+  drawHitVignette(ctx);
+  drawFieldFrame(ctx);
+  drawBossBar(ctx, state.monster);
+  drawPlayerHud(ctx);
 
   if (state.phase === "won") {
     drawEndPanel(ctx, "YOU WIN", "#3ff08a");
@@ -524,6 +846,7 @@ function loop(time: number): void {
   lastTime = time;
 
   update(state, dt, input);
+  updatePresentation(dt);
   render();
 
   requestAnimationFrame(loop);

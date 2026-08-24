@@ -50,16 +50,21 @@ export interface InputState {
   keyDirection: -1 | 0 | 1;
 }
 
-export const CANVAS_WIDTH = 480;
-export const CANVAS_HEIGHT = 640;
+// 4:3 landscape field. Every position below is derived from these two, so the
+// play area's shape lives in exactly one place.
+export const CANVAS_WIDTH = 960;
+export const CANVAS_HEIGHT = 720;
 
-const AIRPLANE_WIDTH = 36;
-const AIRPLANE_HEIGHT = 20;
+// Entity sizes scale with the larger field so they stay readable; the speeds,
+// HP, damage and intervals further down are deliberately untouched, and are
+// the values to revisit after playtesting the new proportions.
+const AIRPLANE_WIDTH = 48;
+const AIRPLANE_HEIGHT = 26;
 const AIRPLANE_Y = CANVAS_HEIGHT - 60;
 const AIRPLANE_MOVE_SPEED = 260; // px/s, keyboard movement
 
-const MONSTER_WIDTH = 64;
-const MONSTER_HEIGHT = 32;
+const MONSTER_WIDTH = 96;
+const MONSTER_HEIGHT = 48;
 const MONSTER_Y = 40;
 
 export const MONSTER_MAX_HP = 40;
@@ -87,7 +92,7 @@ export const MAX_CONCURRENT_OBJECTS = 3;
 // How far left/right of the monster's centre a thrown object launches from —
 // alternating sides each spawn to force a visibly diagonal angle even when
 // the airplane sits roughly underneath the monster.
-export const OBJECT_SPAWN_SIDE_OFFSET = MONSTER_WIDTH / 2; // 32px
+export const OBJECT_SPAWN_SIDE_OFFSET = MONSTER_WIDTH / 2; // 48px
 
 export function createInitialState(): GameState {
   return {

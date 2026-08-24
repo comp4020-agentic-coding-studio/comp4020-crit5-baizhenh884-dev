@@ -4,7 +4,7 @@ body {
   font-family: system-ui, sans-serif;
   line-height: 1.5;
   color: #e8ecf5;
-  background: #080b16;
+  background: radial-gradient(120% 90% at 50% 0%, #101736 0%, #070a16 70%);
   min-height: 100vh;
   box-sizing: border-box;
 }
@@ -23,45 +23,67 @@ main {
 h1 {
   font-size: 1.05rem;
   margin: 0.15rem 0 0.2rem;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #9fb2d8;
+  font-weight: 600;
 }
 
 canvas#game {
   display: block;
 
   /*
-    The internal coordinate space stays 480x640; only the displayed size
-    changes. Width is the smallest of:
+    The field is 4:3 landscape (960x720 logical). Width is the smallest of:
       - 100%, so narrow screens never scroll horizontally;
-      - 720px, the desktop cap (1.5x the old fixed 480px);
-      - whatever the viewport height leaves (0.75 = 480/640), so a tall
-        portrait canvas can't push the page out of the viewport;
-    then floored at 480px so a short window never shrinks it below the size it
-    used to be. The vh line is a fallback for browsers without dvh.
+      - 960px, the desktop cap;
+      - what the viewport height allows (1.3333 = 960/720), so the field plus
+        the page chrome and the Restart button always fit without scrolling.
+    Landscape fits far more easily than the old portrait field did, so the
+    minimum floor the portrait layout needed is gone. The vh line is a
+    fallback for browsers without dvh.
   */
-  width: min(100%, max(480px, min(720px, calc((100vh - 7.5rem) * 0.75))));
-  width: min(100%, max(480px, min(720px, calc((100dvh - 7.5rem) * 0.75))));
-  aspect-ratio: 480 / 640;
+  width: min(100%, 960px, calc((100vh - 8.5rem) * 1.3333));
+  width: min(100%, 960px, calc((100dvh - 8.5rem) * 1.3333));
+  aspect-ratio: 4 / 3;
 
-  background: #0b1020;
-  border-radius: 0.5rem;
+  background: #070a16;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(140, 170, 255, 0.18);
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.08),
-    0 10px 40px rgba(0, 0, 0, 0.55);
+    0 0 0 1px rgba(0, 0, 0, 0.6),
+    0 0 34px rgba(80, 120, 255, 0.14),
+    0 14px 44px rgba(0, 0, 0, 0.6);
   touch-action: none;
 }
 
+/* Claw back a little width on phones, where the field is width-bound. */
+@media (max-width: 480px) {
+  body {
+    padding: 0.4rem 0.5rem 0.75rem;
+  }
+}
+
 button#restart {
-  font-size: 1rem;
-  padding: 0.5rem 1.5rem;
-  border: none;
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.5rem 1.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: 0.375rem;
-  background: linear-gradient(180deg, #52ffa0, #2ad57c);
-  color: #0b1020;
+  background: linear-gradient(180deg, #52ffa0, #23c471);
+  color: #06231a;
   cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    0 0 18px rgba(63, 240, 138, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.45);
 }
 
 button#restart:hover {
-  filter: brightness(1.05);
+  filter: brightness(1.08);
+}
+
+button#restart:active {
+  transform: translateY(1px);
 }
