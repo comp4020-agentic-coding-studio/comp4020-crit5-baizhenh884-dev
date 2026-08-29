@@ -53,17 +53,19 @@ new ResizeObserver(syncBackingStore).observe(canvas);
 
 let state = createInitialState();
 
-const input: InputState = { pointerX: null, keyDirection: 0 };
+const input: InputState = { pointerX: null, pointerY: null, keyDirection: 0, keyDirectionY: 0 };
 
 // Pointer Events unify mouse and touch in one listener — no separate
-// touch-event handling needed for the same horizontal-movement mechanic.
+// touch-event handling needed for the same movement mechanic, on either axis.
 canvas.addEventListener("pointermove", (event) => {
   const rect = canvas.getBoundingClientRect();
   const scaleX = CANVAS_WIDTH / rect.width;
+  const scaleY = CANVAS_HEIGHT / rect.height;
   input.pointerX = (event.clientX - rect.left) * scaleX;
+  input.pointerY = (event.clientY - rect.top) * scaleY;
 });
 
-const KEY_DIRECTIONS: Record<string, -1 | 1> = {
+const KEY_DIRECTIONS_X: Record<string, -1 | 1> = {
   ArrowLeft: -1,
   a: -1,
   A: -1,
@@ -72,7 +74,17 @@ const KEY_DIRECTIONS: Record<string, -1 | 1> = {
   D: 1,
 };
 
+const KEY_DIRECTIONS_Y: Record<string, -1 | 1> = {
+  ArrowUp: -1,
+  w: -1,
+  W: -1,
+  ArrowDown: 1,
+  s: 1,
+  S: 1,
+};
+
 const heldDirections = new Set<-1 | 1>();
+const heldDirectionsY = new Set<-1 | 1>();
 
 function recomputeKeyDirection(): void {
   if (heldDirections.has(-1) && !heldDirections.has(1)) input.keyDirection = -1;
@@ -80,18 +92,36 @@ function recomputeKeyDirection(): void {
   else input.keyDirection = 0;
 }
 
+function recomputeKeyDirectionY(): void {
+  if (heldDirectionsY.has(-1) && !heldDirectionsY.has(1)) input.keyDirectionY = -1;
+  else if (heldDirectionsY.has(1) && !heldDirectionsY.has(-1)) input.keyDirectionY = 1;
+  else input.keyDirectionY = 0;
+}
+
 window.addEventListener("keydown", (event) => {
-  const direction = KEY_DIRECTIONS[event.key];
-  if (direction === undefined) return;
-  heldDirections.add(direction);
-  recomputeKeyDirection();
+  const directionX = KEY_DIRECTIONS_X[event.key];
+  if (directionX !== undefined) {
+    heldDirections.add(directionX);
+    recomputeKeyDirection();
+  }
+  const directionY = KEY_DIRECTIONS_Y[event.key];
+  if (directionY !== undefined) {
+    heldDirectionsY.add(directionY);
+    recomputeKeyDirectionY();
+  }
 });
 
 window.addEventListener("keyup", (event) => {
-  const direction = KEY_DIRECTIONS[event.key];
-  if (direction === undefined) return;
-  heldDirections.delete(direction);
-  recomputeKeyDirection();
+  const directionX = KEY_DIRECTIONS_X[event.key];
+  if (directionX !== undefined) {
+    heldDirections.delete(directionX);
+    recomputeKeyDirection();
+  }
+  const directionY = KEY_DIRECTIONS_Y[event.key];
+  if (directionY !== undefined) {
+    heldDirectionsY.delete(directionY);
+    recomputeKeyDirectionY();
+  }
 });
 
 function restartIfEnded(): void {
@@ -359,8 +389,16 @@ function drawBossBar(context: CanvasRenderingContext2D, monster: Monster): void 
 }
 
 // Player health as a small HUD panel: an airplane glyph plus one pip per HP.
+// Panel width is derived from PLAYER_MAX_HP so the frame always wraps the
+// pips snugly instead of leaving dead space when the HP count changes.
 function drawPlayerHud(context: CanvasRenderingContext2D): void {
-  const panelW = 226;
+  const pipW = 14;
+  const pipH = 9;
+  const gap = 3;
+  const iconInset = 44; // space reserved for the airplane glyph before the pips
+  const rightPadding = 15;
+
+  const panelW = iconInset + PLAYER_MAX_HP * pipW + (PLAYER_MAX_HP - 1) * gap + rightPadding;
   const panelH = 38;
   const x = 20;
   const y = CANVAS_HEIGHT - panelH - 20;
@@ -379,10 +417,7 @@ function drawPlayerHud(context: CanvasRenderingContext2D): void {
   airplanePath(context, x + 22, y + 9, 22, 21);
   context.fill();
 
-  const pipW = 14;
-  const pipH = 9;
-  const gap = 3;
-  const startX = x + 44;
+  const startX = x + iconInset;
   const pipY = y + (panelH - pipH) / 2;
   for (let i = 0; i < PLAYER_MAX_HP; i++) {
     const px = startX + i * (pipW + gap);

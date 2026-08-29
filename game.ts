@@ -45,9 +45,14 @@ export interface InputState {
   // Latest known pointer x (canvas-relative), or null if the pointer hasn't
   // moved over the canvas yet this session.
   pointerX: number | null;
+  // Latest known pointer y (canvas-relative), or null if the pointer hasn't
+  // moved over the canvas yet this session.
+  pointerY: number | null;
   // Keyboard direction: -1 (left), 0 (none), 1 (right). Independent of the
   // pointer path — both write to the same airplane.x each frame.
   keyDirection: -1 | 0 | 1;
+  // Keyboard vertical direction: -1 (up), 0 (none), 1 (down).
+  keyDirectionY: -1 | 0 | 1;
 }
 
 // 4:3 landscape field. Every position below is derived from these two, so the
@@ -58,10 +63,14 @@ export const CANVAS_HEIGHT = 720;
 // Entity sizes scale with the larger field so they stay readable; the speeds,
 // HP, damage and intervals further down are deliberately untouched, and are
 // the values to revisit after playtesting the new proportions.
-const AIRPLANE_WIDTH = 48;
-const AIRPLANE_HEIGHT = 26;
+const AIRPLANE_WIDTH = 64;
+const AIRPLANE_HEIGHT = 34;
+// Bottom of the airplane's vertical range — where it starts. AIRPLANE_MIN_Y is
+// the top of that range: high enough to give real room to dodge, but kept
+// clear of the boss bar and the monster's row.
 const AIRPLANE_Y = CANVAS_HEIGHT - 60;
-const AIRPLANE_MOVE_SPEED = 260; // px/s, keyboard movement
+const AIRPLANE_MIN_Y = 200;
+const AIRPLANE_MOVE_SPEED = 260; // px/s, keyboard movement (both axes)
 
 const MONSTER_WIDTH = 96;
 const MONSTER_HEIGHT = 48;
@@ -82,27 +91,35 @@ export const BULLET_DAMAGE = 1;
 const OBJECT_WIDTH = 24;
 const OBJECT_HEIGHT = 24;
 
-export const PLAYER_MAX_HP = 10;
+export const PLAYER_MAX_HP = 5;
 export const OBJECT_DAMAGE = 1;
 // Speed along the object's fixed aimed trajectory (not just vertical fall
 // speed) — forgiving, and never ramps up.
-export const OBJECT_SPEED = 100; // px/s
-export const OBJECT_SPAWN_INTERVAL_MS = 1500;
+export const OBJECT_SPEED = 135; // px/s
+export const OBJECT_SPAWN_INTERVAL_MS = 1200;
 export const MAX_CONCURRENT_OBJECTS = 3;
 // How far left/right of the monster's centre a thrown object launches from —
 // alternating sides each spawn to force a visibly diagonal angle even when
 // the airplane sits roughly underneath the monster.
 export const OBJECT_SPAWN_SIDE_OFFSET = MONSTER_WIDTH / 2; // 48px
+// A throw targets the wing on the same side as the hand that threw it (left
+// hand -> left wing, right hand -> right wing), not the airplane's centre —
+// this is what "aims at the plane" means here. Expressed as a fraction of
+// airplane width from that side's edge, so it stays a real wing target
+// (not the tip) as the airplane's size changes.
+const WING_TARGET_RATIO = 0.25;
 
 export function createInitialState(): GameState {
+  const airplane: Rect = {
+    x: CANVAS_WIDTH / 2 - AIRPLANE_WIDTH / 2,
+    y: AIRPLANE_Y,
+    w: AIRPLANE_WIDTH,
+    h: AIRPLANE_HEIGHT,
+  };
+
   return {
     phase: "active",
-    airplane: {
-      x: CANVAS_WIDTH / 2 - AIRPLANE_WIDTH / 2,
-      y: AIRPLANE_Y,
-      w: AIRPLANE_WIDTH,
-      h: AIRPLANE_HEIGHT,
-    },
+    airplane,
     monster: {
       x: CANVAS_WIDTH / 2 - MONSTER_WIDTH / 2,
       y: MONSTER_Y,
@@ -113,10 +130,10 @@ export function createInitialState(): GameState {
     },
     bullets: [],
     fireTimerMs: 0,
-    // One object already en route at a forgiving speed, aimed toward the
-    // airplane's own default (centered) x — so the very first thing a player
-    // sees is "something is thrown toward roughly where I am," with several
-    // seconds to notice and react, not an unavoidable first hit.
+    // One object already en route at a forgiving speed, aimed at the
+    // airplane's default (centered) right wing — so the very first thing a
+    // player sees is "something is thrown toward roughly where I am," with
+    // several seconds to notice and react, not an unavoidable first hit.
     fallingObjects: [
       {
         x: CANVAS_WIDTH / 2 - OBJECT_WIDTH / 2,
@@ -126,7 +143,7 @@ export function createInitialState(): GameState {
         ...aimedVelocity(
           CANVAS_WIDTH / 2,
           MONSTER_Y + MONSTER_HEIGHT,
-          CANVAS_WIDTH / 2,
+          wingTargetX(airplane, 1),
           AIRPLANE_Y,
         ),
       },
@@ -139,6 +156,18 @@ export function createInitialState(): GameState {
 
 function clampToCanvas(x: number, width: number): number {
   return Math.max(0, Math.min(CANVAS_WIDTH - width, x));
+}
+
+function clampAirplaneY(y: number): number {
+  return Math.max(AIRPLANE_MIN_Y, Math.min(AIRPLANE_Y, y));
+}
+
+// The x-coordinate of the wing on the given side of the airplane, as a
+// fraction of its width in from that edge — the point a throw from the
+// matching hand aims at, instead of the airplane's centre.
+function wingTargetX(airplane: Rect, side: -1 | 1): number {
+  const ratio = side === -1 ? WING_TARGET_RATIO : 1 - WING_TARGET_RATIO;
+  return airplane.x + airplane.w * ratio;
 }
 
 function aabbOverlap(a: Rect, b: Rect): boolean {
@@ -164,10 +193,11 @@ function aimedVelocity(
 }
 
 // Pointer position is a one-shot signal, consumed and cleared the frame it's
-// applied — otherwise a pointerX set once would keep snapping the plane back
-// every subsequent frame, permanently overriding keyboard input the instant
-// the mouse ever touched the canvas. Clearing it lets whichever input the
-// player used most recently (a fresh pointermove, or a still-held key) win.
+// applied — otherwise a pointerX/pointerY set once would keep snapping the
+// plane back every subsequent frame, permanently overriding keyboard input
+// the instant the mouse ever touched the canvas. Clearing it lets whichever
+// input the player used most recently (a fresh pointermove, or a still-held
+// key) win, independently on each axis.
 function moveAirplane(state: GameState, dt: number, input: InputState): void {
   const plane = state.airplane;
 
@@ -176,8 +206,17 @@ function moveAirplane(state: GameState, dt: number, input: InputState): void {
     input.pointerX = null;
   }
 
+  if (input.pointerY !== null) {
+    plane.y = clampAirplaneY(input.pointerY - plane.h / 2);
+    input.pointerY = null;
+  }
+
   if (input.keyDirection !== 0) {
     plane.x = clampToCanvas(plane.x + input.keyDirection * AIRPLANE_MOVE_SPEED * dt, plane.w);
+  }
+
+  if (input.keyDirectionY !== 0) {
+    plane.y = clampAirplaneY(plane.y + input.keyDirectionY * AIRPLANE_MOVE_SPEED * dt);
   }
 }
 
@@ -227,19 +266,20 @@ function spawnFallingObjects(state: GameState, dt: number): void {
   if (state.spawnTimerMs >= OBJECT_SPAWN_INTERVAL_MS) {
     state.spawnTimerMs -= OBJECT_SPAWN_INTERVAL_MS;
     const monster = state.monster;
+    const side = state.nextSpawnSide;
     // Launch from the monster's current left or right side (alternating each
     // spawn), not its centre, so the throw is visibly diagonal even when the
     // airplane sits roughly underneath the monster.
-    const rawOriginX =
-      monster.x + monster.w / 2 - OBJECT_WIDTH / 2 + state.nextSpawnSide * OBJECT_SPAWN_SIDE_OFFSET;
+    const rawOriginX = monster.x + monster.w / 2 - OBJECT_WIDTH / 2 + side * OBJECT_SPAWN_SIDE_OFFSET;
     const originX = clampToCanvas(rawOriginX, OBJECT_WIDTH);
     const originY = monster.y + monster.h;
-    state.nextSpawnSide = state.nextSpawnSide === 1 ? -1 : 1;
-    // Aim at the airplane's position at this exact moment, then fly a fixed
-    // straight line from there — recorded once at launch, never re-aimed, so
-    // it does not home in and moving after the throw is how the player dodges.
+    state.nextSpawnSide = side === 1 ? -1 : 1;
+    // Aim at the airplane's position at this exact moment — specifically the
+    // wing on the same side as the throwing hand — then fly a fixed straight
+    // line from there — recorded once at launch, never re-aimed, so it does
+    // not home in and moving after the throw is how the player dodges.
     const airplane = state.airplane;
-    const targetX = airplane.x + airplane.w / 2;
+    const targetX = wingTargetX(airplane, side);
     const targetY = airplane.y;
     state.fallingObjects.push({
       x: originX,

@@ -7,7 +7,7 @@ import {
   type InputState,
 } from "../game.ts";
 
-const noInput: InputState = { pointerX: null, keyDirection: 0 };
+const noInput: InputState = { pointerX: null, pointerY: null, keyDirection: 0, keyDirectionY: 0 };
 
 // The one rule with a dedicated test, per spec/README.md and the Crit 5 plan:
 // falling object hits player -> HP decreases -> object is removed -> player
