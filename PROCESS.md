@@ -2,13 +2,13 @@
 
 ## What I built
 
-**Sky Defender**: a browser arcade game where an airplane that only moves
-sideways fires automatically at a monster patrolling the top, which hurls
-aimed fireballs back. My first concept was a plain
-catch game. I revised it before building anything: I wanted a clearer goal and
-a win/lose loop that meant something, while keeping the player to one
-controlled action. The airplane version gave it something to defeat and
-something to lose to, with movement still the only input.
+**Sky Defender**: a browser arcade game where an airplane moves around the
+lower field and fires automatically at a patrolling monster, which hurls aimed
+fireballs back. My first concept was a plain catch game. I revised it before
+building: I wanted a clearer goal and a meaningful win/lose loop while keeping
+movement as the only input. A final playtest expanded movement to both axes,
+retargeted throws at the airplane's wings, and rebalanced HP and pacing.
+[`dd424a8`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit5-baizhenh884-dev/commit/dd424a8)
 
 ## The moments that mattered
 
